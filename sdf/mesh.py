@@ -54,6 +54,11 @@ def _worker(sdf, job, sparse):
     except Exception:
         return []
         # return _debug_triangles(X, Y, Z)
+
+    # skip volumes not intersecting mesh
+    if volume.min() > 0:
+        return None
+
     scale = np.array([X[1] - X[0], Y[1] - Y[0], Z[1] - Z[0]])
     offset = np.array([X[0], Y[0], Z[0]])
     return points * scale + offset
