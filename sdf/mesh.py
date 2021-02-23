@@ -8,22 +8,33 @@ import numpy as np
 import time
 
 from . import progress, stl
+from .dual_contour import dual_contour
 
 WORKERS = multiprocessing.cpu_count()
-SAMPLES = 2 ** 22
+SAMPLES = 2**22
 BATCH_SIZE = 32
+
 
 def _marching_cubes(volume, level=0):
     verts, faces, _, _ = measure.marching_cubes(volume, level)
+
     return verts[faces].reshape((-1, 3))
+
+
+def _dual_contour(volume, normals):
+    verts, faces = dual_contour(volume, normals)
+
+    return verts[faces].reshape((-1, 3))
+
 
 def _cartesian_product(*arrays):
     la = len(arrays)
     dtype = np.result_type(*arrays)
     arr = np.empty([len(a) for a in arrays] + [la], dtype=dtype)
     for i, a in enumerate(np.ix_(*arrays)):
-        arr[...,i] = a
+        arr[..., i] = a
     return arr.reshape(-1, la)
+
 
 def _skip(sdf, job):
     X, Y, Z = job
@@ -34,13 +45,14 @@ def _skip(sdf, job):
     y = (y0 + y1) / 2
     z = (z0 + z1) / 2
     r = abs(sdf(np.array([(x, y, z)])).reshape(-1)[0])
-    d = np.linalg.norm(np.array((x-x0, y-y0, z-z0)))
+    d = np.linalg.norm(np.array((x - x0, y - y0, z - z0)))
     if r <= d:
         return False
     corners = np.array(list(itertools.product((x0, x1), (y0, y1), (z0, z1))))
     values = sdf(corners).reshape(-1)
     same = np.all(values > 0) if values[0] > 0 else np.all(values < 0)
     return same
+
 
 def _worker(sdf, job, sparse):
     X, Y, Z = job
@@ -49,19 +61,19 @@ def _worker(sdf, job, sparse):
         # return _debug_triangles(X, Y, Z)
     P = _cartesian_product(X, Y, Z)
     volume = sdf(P).reshape((len(X), len(Y), len(Z)))
-    try:
-        points = _marching_cubes(volume)
-    except Exception:
-        return []
-        # return _debug_triangles(X, Y, Z)
+    normals = sdf.normal(P).reshape((len(X), len(Y), len(Z), 3))
 
     # skip volumes not intersecting mesh
     if volume.min() > 0:
         return None
 
+    # points = _marching_cubes(volume)
+    points = _dual_contour(volume, normals)
+
     scale = np.array([X[1] - X[0], Y[1] - Y[0], Z[1] - Z[0]])
     offset = np.array([X[0], Y[0], Z[0]])
     return points * scale + offset
+
 
 def _estimate_bounds(sdf):
     # TODO: raise exception if bound estimation fails
@@ -85,11 +97,15 @@ def _estimate_bounds(sdf):
         x0, y0, z0 = (x0, y0, z0) + where.min(axis=0) * d - d / 2
     return ((x0, y0, z0), (x1, y1, z1))
 
-def generate(
-        sdf,
-        step=None, bounds=None, samples=SAMPLES,
-        workers=WORKERS, batch_size=BATCH_SIZE,
-        verbose=True, sparse=True):
+
+def generate(sdf,
+             step=None,
+             bounds=None,
+             samples=SAMPLES,
+             workers=WORKERS,
+             batch_size=BATCH_SIZE,
+             verbose=True,
+             sparse=True):
 
     start = time.time()
 
@@ -99,7 +115,7 @@ def generate(
 
     if step is None and samples is not None:
         volume = (x1 - x0) * (y1 - y0) * (z1 - z0)
-        step = (volume / samples) ** (1 / 3)
+        step = (volume / samples)**(1 / 3)
 
     try:
         dx, dy, dz = step
@@ -116,18 +132,17 @@ def generate(
     Z = np.arange(z0, z1, dz)
 
     s = batch_size
-    Xs = [X[i:i+s+1] for i in range(0, len(X), s)]
-    Ys = [Y[i:i+s+1] for i in range(0, len(Y), s)]
-    Zs = [Z[i:i+s+1] for i in range(0, len(Z), s)]
+    Xs = [X[i:i + s + 2] for i in range(0, len(X), s)]
+    Ys = [Y[i:i + s + 2] for i in range(0, len(Y), s)]
+    Zs = [Z[i:i + s + 2] for i in range(0, len(Z), s)]
 
     batches = list(itertools.product(Xs, Ys, Zs))
     num_batches = len(batches)
-    num_samples = sum(len(xs) * len(ys) * len(zs)
-        for xs, ys, zs in batches)
+    num_samples = sum(len(xs) * len(ys) * len(zs) for xs, ys, zs in batches)
 
     if verbose:
         print('%d samples in %d batches with %d workers' %
-            (num_samples, num_batches, workers))
+              (num_samples, num_batches, workers))
 
     points = []
     skipped = empty = nonempty = 0
@@ -153,9 +168,11 @@ def generate(
 
     return points
 
+
 def save(path, *args, **kwargs):
     points = generate(*args, **kwargs)
     stl.write_binary_stl(path, points)
+
 
 def _debug_triangles(X, Y, Z):
     x0, x1 = X[0], X[-1]
@@ -179,23 +196,46 @@ def _debug_triangles(X, Y, Z):
     ]
 
     return [
-        v[3], v[5], v[7],
-        v[5], v[3], v[1],
-        v[0], v[6], v[4],
-        v[6], v[0], v[2],
-        v[0], v[5], v[1],
-        v[5], v[0], v[4],
-        v[5], v[6], v[7],
-        v[6], v[5], v[4],
-        v[6], v[3], v[7],
-        v[3], v[6], v[2],
-        v[0], v[3], v[2],
-        v[3], v[0], v[1],
+        v[3],
+        v[5],
+        v[7],
+        v[5],
+        v[3],
+        v[1],
+        v[0],
+        v[6],
+        v[4],
+        v[6],
+        v[0],
+        v[2],
+        v[0],
+        v[5],
+        v[1],
+        v[5],
+        v[0],
+        v[4],
+        v[5],
+        v[6],
+        v[7],
+        v[6],
+        v[5],
+        v[4],
+        v[6],
+        v[3],
+        v[7],
+        v[3],
+        v[6],
+        v[2],
+        v[0],
+        v[3],
+        v[2],
+        v[3],
+        v[0],
+        v[1],
     ]
 
-def sample_slice(
-        sdf, w=1024, h=1024,
-        x=None, y=None, z=None, bounds=None):
+
+def sample_slice(sdf, w=1024, h=1024, x=None, y=None, z=None, bounds=None):
 
     if bounds is None:
         bounds = _estimate_bounds(sdf)
@@ -224,6 +264,7 @@ def sample_slice(
 
     P = _cartesian_product(X, Y, Z)
     return sdf(P).reshape((w, h)), extent, axes
+
 
 def show_slice(*args, **kwargs):
     import matplotlib.pyplot as plt

@@ -15,4 +15,4 @@ f |= section(1.75, 1.85, 0.25, 0.5).k(0.01)
 f |= section(1.85, 1.90, 0.5, 0.25).k(0.05)
 f |= sphere(0.3).translate(Z * 2.15).k(0.05)
 
-f.save('pawn.stl', samples=10**3)
+f.save('pawn.stl', samples=2**16)
